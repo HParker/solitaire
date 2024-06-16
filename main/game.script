@@ -1,0 +1,496 @@
+CARD_SCALE = 2
+
+OVERLAP_OFFSET = 25
+CARD_HEIGHT = 58 * CARD_SCALE
+CARD_WIDTH = 40 * CARD_SCALE
+
+RESTART_X = 720
+RESTART_Y = 25
+RESTART_WIDTH = 128
+RESART_HEIGHT = 32
+
+-- TODO: draw 3 mode
+-- TODO: options page
+
+LESS_TABLE = {
+	["K"] = "Q",
+	["Q"] = "J",
+	["J"] = "10",
+	["10"] = "09",
+	["09"] = "08",
+	["08"] = "07",
+	["07"] = "06",
+	["06"] = "05",
+	["05"] = "04",
+	["04"] = "03",
+	["03"] = "02",
+	["02"] = "A",
+}
+
+local function standard_deck(self)
+	self.deck.stack = {}
+	for i, s in pairs(self.suits) do
+		for j, f in pairs(self.faces) do
+			table.insert(self.deck.stack, { id = nil, face = f, suit = s })
+		end
+	end
+end
+
+local function shuffle(t)
+	for i = 1, #t do
+		local r = math.random(i, #t)
+		t[i], t[r] = t[r], t[i]
+	end
+end
+
+local function check_win(self)
+	-- to remain flexible, the win condition is no cards NOT on ace stacks
+	local not_on_ace = #self.deck.stack + #self.draw.stack
+	for i, drops in ipairs(self.drop_zones) do
+		not_on_ace = not_on_ace + #drops.stack
+	end
+
+	if not_on_ace == 0 then
+		self.won = true
+		-- win animation
+		for i, ace in ipairs(self.aces) do
+			for j, card in ipairs(ace.stack) do
+				local card_pos = vmath.vector3(ace.vec.x + math.random(-200, 150), ace.vec.y - 150 + math.random(-200, 200), ((i * #self.aces) + j) * 0.001)
+				go.animate(card.id, "position", go.PLAYBACK_ONCE_FORWARD, card_pos, go.EASING_OUTELASTIC, 4)
+			end
+		end
+
+	end
+end
+
+local function move_card(from, to, card, style, config)
+	if config == nil then
+		config = {}
+	end
+	if config.delay == nil then
+		config.delay = 0.0
+	end
+
+	local hidden_string = ""
+	if config.hidden == nil or config.hidden == false then
+		config.hidden = false
+	else
+		config.hidden = true
+		hidden_string = "hidden"
+	end
+	
+	local card_dest = nil
+	if style == "stack" then
+		card_dest = vmath.vector3(to.vec.x, to.vec.y, #to.stack * 0.001)
+	elseif style == "cascade" then
+		card_dest = vmath.vector3(to.vec.x, to.vec.y - (OVERLAP_OFFSET * #to.stack), #to.stack * 0.001)
+	end
+
+	local card_start = nil
+	if from == nil then
+		card_start = card_dest
+	else
+		card_start = vmath.vector3(from.vec.x, from.vec.y, #to.stack * 0.001)
+	end
+
+	if card.id == nil then
+		card.id = factory.create("#card_factory", card_start, nil, { face = hash(card.face), suit = hash(card.suit), hidden = hash(hidden_string) }, CARD_SCALE)
+	end
+
+	go.animate(card.id, "position", go.PLAYBACK_ONCE_FORWARD, card_dest, go.EASING_OUTSINE, 0.1, config.delay)
+	card.hidden = config.hidden
+	table.insert(to.stack, card)
+end
+
+local function test_deal(self, name)
+	self.undealt = false
+	if name == "autosolve" then
+		-- once ace to draw and start the cascade
+		self.deck.stack[1] = {
+			id = nil,
+			face = "A",
+			suit = "hearts"
+		}
+
+		self.faces = { "K", "Q", "J", "10", "09", "08", "07", "06", "05", "04", "03", "02", "A" }
+		self.suits = { "clubs", "diamonds", "hearts", "spades" }
+		for i, s in pairs(self.suits) do
+			for j, f in pairs(self.faces) do
+				if not (f == "A" and s == "hearts") then
+					local card = { face = f, suit = s }
+					move_card(nil, self.drop_zones[(i % 4) + 1], card, "cascade")
+				end
+			end
+		end
+	end
+end
+
+local function draw_card(start_stack, destination_stack, num_cards)
+	local card = table.remove(start_stack.stack, #start_stack.stack)
+	local start_pos = vmath.vector3(start_stack.vec.x, start_stack.vec.y, #destination_stack.stack * 0.001)
+	local destination_pos = vmath.vector3(destination_stack.vec.x, destination_stack.vec.y, #destination_stack.stack * 0.001)
+	card.id = factory.create("#card_factory", start_pos, nil, { face = hash(card.face), suit = hash(card.suit), hidden = hash("") }, CARD_SCALE)	
+	go.animate(card.id, "position", go.PLAYBACK_ONCE_FORWARD, destination_pos, go.EASING_OUTBACK, 0.1)
+	table.insert(destination_stack.stack, card)
+end
+
+local function solitaire_deal(self)
+	for i, dz in pairs(self.drop_zones) do
+		for c = 1, i do
+			local card = table.remove(self.deck.stack, #self.deck.stack)
+			local config = {
+				delay = (c * #self.drop_zones + i) * 0.02
+			}
+
+			if c == i then
+				config.hidden = false
+			else
+				config.hidden = true
+			end
+			
+			move_card(self.deck, dz, card, "cascade", config)
+		end
+	end
+end
+
+local function reveal_next(self)
+	-- reveal next card in the stack
+	if self.drag_source ~= nil and #self.drag_source.stack > 0 and self.drag_source.stack[#self.drag_source.stack].hidden then
+		self.drag_source.stack[#self.drag_source.stack].hidden = false
+		msg.post(self.drag_source.stack[#self.drag_source.stack].id, "reveal")
+	end
+end
+
+local function drop_in(self, stack, style)
+	for i=#self.dragging,1,-1 do
+		local card = self.dragging[i]
+		move_card(nil, stack, card, style)
+	end
+
+	reveal_next(self)
+	self.dragging = {}
+	self.drag_offset = nil
+	self.drag_source = nil
+	
+end
+
+local function return_to_source(self)
+	drop_in(self, self.drag_source, self.drag_source_type)
+end
+
+function init(self)
+	math.randomseed(socket.gettime())
+	local pos = go.get_position()
+
+	self.faces = { "A", "02", "03", "04", "05", "06", "07", "08", "09", "10", "J", "Q", "K" }
+	self.suits = { "clubs", "diamonds", "hearts", "spades" }
+
+	self.solve_counter = 0.0
+	self.solve_timer = 0.1
+
+	self.won = false
+	self.auto_solvable = false
+	self.undealt = true
+
+	-- deck
+	self.deck_clickable = true
+	local deck_pos = vmath.vector3(100, 380 + CARD_HEIGHT + OVERLAP_OFFSET, 0.5)
+	self.deck = {
+		id = factory.create("#card_factory", deck_pos, nil, { card = hash("card_back") }, CARD_SCALE),
+		vec = deck_pos,
+		stack = {}
+	}
+
+	-- draw stack
+	self.draw = {
+		vec = vmath.vector3(100 + CARD_WIDTH + 10, 380 + CARD_HEIGHT + OVERLAP_OFFSET, 0.0),
+		stack = {}
+	}
+
+	-- drag state
+	self.dragging = {}
+	self.drag_offset = nil
+	self.drag_source = nil
+	self.drag_source_type = nil
+
+	-- drop zones
+	self.drop_zones = {}
+
+	local dzx = 100
+	local dzy = 380
+	for i=1,7 do
+		local dz = { vec = vmath.vector3(dzx, dzy, 0.0), stack = {} }
+		table.insert(self.drop_zones, dz)
+		dzx = dzx + CARD_WIDTH + 10
+		factory.create("#card_factory", dz.vec, nil, { card = hash("card_empty"), visible = hash("visible") }, CARD_SCALE)
+	end
+
+	-- ace stacks
+	dzx = 100 + (CARD_WIDTH + 10) * 3
+	dzy = 380 + CARD_HEIGHT + OVERLAP_OFFSET
+	self.aces = {}
+	for i=1,4 do
+		local dz = { vec = vmath.vector3(dzx, dzy, 0.0), stack = {} }
+		table.insert(self.aces, dz)
+		dzx = dzx + CARD_WIDTH + 10
+		factory.create("#card_factory", dz.vec, nil, { card = hash("card_empty"), visible = hash("visible") }, CARD_SCALE)
+	end
+
+	-- Different configurations for testing can be enabled here
+	-- test_deal(self, "autosolve")
+
+	msg.post(".", "acquire_input_focus")
+end
+
+function fixed_update(self, dt)
+	self.solve_counter = self.solve_counter + dt
+
+	if self.solve_counter > self.solve_timer then
+		self.solve_counter = 0.0
+	else
+		return
+	end
+
+	if self.auto_solvable then
+		local placed = false
+
+		for i, dz in pairs(self.drop_zones) do
+			for j = 1, #self.aces do
+				local ace_top = self.aces[j].stack[#self.aces[j].stack]
+				local dz_top = dz.stack[#dz.stack]
+				if not placed and (dz_top ~= nil) and ((ace_top == nil and dz_top.face == "A") or (ace_top ~= nil and dz_top.suit == ace_top.suit and ace_top.face == LESS_TABLE[dz_top.face])) then
+					local card = table.remove(dz.stack, #dz.stack)
+					move_card(dz, self.aces[j], card, "stack")
+					placed = true
+				end
+			end
+		end
+
+		if placed == false then
+			check_win(self)
+		end
+	end
+end
+
+local function card_clicked(self, card, x, y)
+	return (x > card.x - CARD_WIDTH/2 and x < card.x + CARD_WIDTH/2 and y > card.y - CARD_HEIGHT/2 and y < card.y + CARD_HEIGHT/2)
+end
+
+-- TODO: can I get stack_cards from stack and not require that?
+local function stack_clicked(self, stack, x, y)
+	local depth = #stack.stack
+	if x > stack.vec.x - CARD_WIDTH/2 and x < stack.vec.x + CARD_WIDTH/2 then
+		-- check overlaping cards
+		if depth > 1 then
+			for i=1,(depth-1) do
+				if y < stack.vec.y + CARD_HEIGHT/2 - (i - 1) * OVERLAP_OFFSET and y > stack.vec.y + CARD_HEIGHT/2 - (i - 1) * OVERLAP_OFFSET - OVERLAP_OFFSET then
+					if not stack.stack[i].hidden then
+						return i
+					else
+						return nil
+					end
+				end
+			end
+		end
+
+		-- TODO: extend this down a bit to cover where the next card would be
+		if y < stack.vec.y + CARD_HEIGHT/2 - ((depth - 1) * OVERLAP_OFFSET) and y > stack.vec.y - CARD_HEIGHT/2 - ((depth - 1) * OVERLAP_OFFSET) then
+			if depth > 0 then
+				if not stack.stack[depth].hidden then
+					return depth
+				else
+					return nil
+				end
+			else
+				return 0 -- TODO: does this zero matter compared with nil?
+			end
+		end
+	end
+	return nil
+end
+
+function on_input(self, action_id, action)
+	-- shuffle everything back into the deck
+	if (self.deck_clickable and action_id == hash("redeal") and action.pressed and #self.dragging == 0) or
+	(action.pressed and action.x > RESTART_X - RESTART_WIDTH/2 and action.x < RESTART_X + RESTART_WIDTH/2 and action.y > RESTART_Y - RESART_HEIGHT/2 and action.y < RESTART_Y + RESART_HEIGHT/2) then
+		-- animate cards going back to deck
+		for i, dz in pairs(self.drop_zones) do
+			for c, card in ipairs(dz.stack) do
+				local finish_callback = function(self, url, property) go.delete(card.id) card.id = nil end
+				go.animate(card.id, "position", go.PLAYBACK_ONCE_FORWARD, self.deck.vec, go.EASING_OUTSINE, 0.1, ((#dz.stack - c) * #self.drop_zones + #self.drop_zones - i) * 0.02, finish_callback)
+			end
+			self.drop_zones[i].stack = {}
+		end
+
+		-- animate back ace stacks
+		for i, ace in ipairs(self.aces) do
+			for c, card in ipairs(ace.stack) do
+				local finish_callback = function(self, url, property) go.delete(card.id) card.id = nil end
+				go.animate(card.id, "position", go.PLAYBACK_ONCE_FORWARD, self.deck.vec, go.EASING_OUTSINE, 0.1, ((#ace.stack - c) * #self.aces + #self.aces - i) * 0.02, finish_callback)
+			end
+			self.aces[i].stack = {}
+		end
+
+		-- animate drawstack going back into deck
+		for i, card in ipairs(self.draw.stack) do
+			local finish_callback = function(self, url, property) go.delete(card.id) card.id = nil end
+			go.animate(card.id, "position", go.PLAYBACK_ONCE_FORWARD, self.deck.vec, go.EASING_OUTSINE, 0.1, i * 0.02, finish_callback)
+		end
+		self.draw.stack = {}
+		self.won = false
+		self.auto_solvable = false
+		self.undealt = true
+		msg.post(self.deck.id, "set_card", { card = "card_back" })
+		return
+	end
+
+	-- click the deck to draw a card
+	if self.deck_clickable and
+	(action_id == hash("touch") and action.pressed and card_clicked(self, self.deck.vec, action.x, action.y)) or
+	(action_id == hash("draw") and action.pressed) then
+
+		if self.undealt then
+			self.deck_clickable = false
+			standard_deck(self)
+			shuffle(self.deck.stack)
+			solitaire_deal(self)
+			timer.delay(56*0.02, false, function(self, handle, time_elapsed) self.deck_clickable = true end)
+			self.undealt = false
+			return
+		end
+
+		if #self.deck.stack == 0 then
+			self.deck_clickable = false
+			for i, card in ipairs(self.draw.stack) do
+				local finish_callback = function(self, url, property) go.delete(card.id) card.id = nil end
+				go.animate(card.id, "position", go.PLAYBACK_ONCE_FORWARD, self.deck.vec, go.EASING_OUTSINE, 0.1, i * 0.02, finish_callback)
+			end
+
+			local deck_reloaded = function(self, url, property) self.deck_clickable = true end
+
+			timer.delay(#self.draw.stack * 0.02, false, deck_reloaded)
+			msg.post(self.deck.id, "set_card", { card = "card_back" })
+
+			for i=#self.draw.stack,1,-1 do
+				table.insert(self.deck.stack, table.remove(self.draw.stack, #self.draw.stack))
+			end
+		elseif #self.deck.stack > 0 then
+			draw_card(self.deck, self.draw, 1)
+		end
+
+		if #self.deck.stack == 0 then
+			msg.post(self.deck.id, "set_card", { card = "card_empty" })
+		end
+	end
+
+	-- pick up from draw pile
+	if action_id == hash("touch") and action.pressed and card_clicked(self, self.draw.vec, action.x, action.y) and #self.draw.stack > 0 then
+		table.insert(self.dragging, table.remove(self.draw.stack, #self.draw.stack))
+		self.drag_offset = vmath.vector3(self.draw.vec.x - action.x, self.draw.vec.y - action.y - OVERLAP_OFFSET, 0)
+		self.drag_source = self.draw
+		self.drag_source_type = "stack"
+	end
+
+	-- pickup from ace stack
+	for i, ace in ipairs(self.aces) do
+		if action_id == hash("touch") and action.pressed and card_clicked(self, ace.vec, action.x, action.y) and #ace.stack > 0 then
+			table.insert(self.dragging, table.remove(ace.stack, #ace.stack))
+			self.drag_offset = vmath.vector3(ace.vec.x - action.x, ace.vec.y - action.y - OVERLAP_OFFSET, 0.1)
+			self.drag_source = ace
+			self.drag_source_type = "stack"
+		end
+	end
+
+	-- drop on ace stack
+	for i, ace in ipairs(self.aces) do
+		if action_id == hash("touch") and action.released and card_clicked(self, ace.vec, action.x, action.y) and #self.dragging == 1 then
+			local card = self.dragging[#self.dragging]
+
+			local card_can_be_placed = false
+			if #ace.stack > 0 then
+				local ace_top_card = ace.stack[#ace.stack]
+				card_can_be_placed = card.suit == ace_top_card.suit and ace_top_card.face == LESS_TABLE[card.face]
+			else
+				card_can_be_placed = card.face == "A"
+			end
+
+			if card_can_be_placed then
+				drop_in(self, ace, "stack")
+				check_win(self)
+			end
+		end
+	end
+
+	-- drop on a dropzone
+	local card_dropped = false
+	for i, dz in pairs(self.drop_zones) do
+		if action_id == hash("touch") and action.released and #self.dragging > 0 then
+			local stack_depth = stack_clicked(self, dz, action.x, action.y)
+			if stack_depth == nil then
+			elseif stack_depth == 0 and self.dragging[#self.dragging].face == "K" then
+				card_dropped = true
+				drop_in(self, dz, "cascade")
+			elseif stack_depth > 0 then
+				local drag_card = self.dragging[#self.dragging]
+				local stack_card = dz.stack[#dz.stack]
+
+				if LESS_TABLE[stack_card.face]  == drag_card.face and
+				(((drag_card.suit == "hearts" or drag_card.suit == "diamonds") and (stack_card.suit == "spades" or stack_card.suit == "clubs")) or
+				((stack_card.suit == "hearts" or stack_card.suit == "diamonds") and (drag_card.suit == "spades" or drag_card.suit == "clubs"))) then
+					card_dropped = true
+					drop_in(self, dz, "cascade")
+				end
+			end
+		end
+	end
+
+	-- dropped not in a drop zone or in a not-allowed dropzone
+	if (not card_dropped) and #self.dragging > 0 and action.released then
+		return_to_source(self)
+	end
+
+	-- pickup from dropzone
+	for i, dz in pairs(self.drop_zones) do
+		if action_id == hash("touch") and action.pressed and #self.dragging == 0 then
+			local stack_depth = stack_clicked(self, dz, action.x, action.y)
+			if stack_depth ~= nil then
+				local original_stack_size = #dz.stack
+
+				for i = #dz.stack,stack_depth,-1 do
+					table.insert(self.dragging, dz.stack[i])
+				end
+
+				for i = #dz.stack, stack_depth, -1 do
+					table.remove(dz.stack, i)
+				end
+				self.drag_offset = vmath.vector3(dz.vec.x - action.x, (dz.vec.y - (original_stack_size * OVERLAP_OFFSET)) - action.y, 0)
+				self.drag_source = dz
+				self.drag_source_type = "cascade"
+			end
+		end
+	end
+
+	-- currently dragging
+	if #self.dragging > 0 then
+		for i, card in pairs(self.dragging) do
+			local card_pos = vmath.vector3(action.x + self.drag_offset.x, action.y + self.drag_offset.y + (i * OVERLAP_OFFSET), 0.2 - i * 0.001)
+			go.set_position(card_pos, card.id)
+		end
+	end
+
+	-- check if autosolve is possible
+	if (not self.undealt) and #self.deck.stack == 0 and #self.draw.stack == 0 and self.auto_solvable == false and #self.dragging == 0 then
+		local all_visible = true
+		for i, dz in pairs(self.drop_zones) do
+			for i, card in ipairs(dz.stack) do
+				if card.hidden then
+					all_visible = false
+				end
+			end
+		end
+
+		if not self.won and all_visible and #self.dragging == 0 then
+			self.auto_solvable = true
+		end
+	end
+end
