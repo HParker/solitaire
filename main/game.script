@@ -59,7 +59,6 @@ local function check_win(self)
 				go.animate(card.id, "position", go.PLAYBACK_ONCE_FORWARD, card_pos, go.EASING_OUTELASTIC, 4)
 			end
 		end
-
 	end
 end
 
@@ -73,6 +72,7 @@ local function move_card(from, to, card, style, config)
 
 	local hidden_string = ""
 	if config.hidden == nil or config.hidden == false then
+		hidden_string = ""
 		config.hidden = false
 	else
 		config.hidden = true
@@ -147,7 +147,6 @@ local function solitaire_deal(self)
 			else
 				config.hidden = true
 			end
-			
 			move_card(self.deck, dz, card, "cascade", config)
 		end
 	end

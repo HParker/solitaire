@@ -3,6 +3,30 @@ go.property("face", hash(""))
 go.property("suit", hash(""))
 go.property("hidden", hash(""))
 
+-- this is only required in release mode since hash's are not converted back to the represented string
+-- 
+FACE_LOOKUP = {
+	[hash("A")] = "A",
+	[hash("02")] = "02",
+	[hash("03")] = "03",
+	[hash("04")] = "04",
+	[hash("05")] = "05",
+	[hash("06")] = "06",
+	[hash("07")] = "07",
+	[hash("08")] = "08",
+	[hash("09")] = "09",
+	[hash("10")] = "10",
+	[hash("J")] = "J",
+	[hash("Q")] = "Q",
+	[hash("K")] = "K"
+}
+SUIT_LOOKUP = { 
+	[hash("clubs")] = "clubs", 
+	[hash("diamonds")] = "diamonds", 
+	[hash("hearts")] = "hearts", 
+	[hash("spades")] = "spades" 
+}
+
 function init(self)
 	-- Add initialization code here
 	-- Learn more: https://defold.com/manuals/script/
@@ -12,7 +36,7 @@ function init(self)
 	elseif self.card ~= hash("") then
 		sprite.play_flipbook("#sprite", self.card)
 	elseif self.suit ~= hash("") and self.face ~= hash("") then
-		sprite.play_flipbook("#sprite", "card_" .. self.suit .. "_" .. self.face)
+		sprite.play_flipbook("#sprite", "card_" .. SUIT_LOOKUP[self.suit] .. "_" .. FACE_LOOKUP[self.face])
 	end
 end
 
@@ -47,8 +71,8 @@ function on_message(self, message_id, message, sender)
 
 	if message_id == hash("reveal") then
 		-- TODO: swap visible and hidden. Feels silly to specify visible.
-		self.visible = hash("visible")
-		sprite.play_flipbook("#sprite", "card_" .. self.suit .. "_" .. self.face)
+		self.hidden = hash("")
+		sprite.play_flipbook("#sprite", "card_" .. SUIT_LOOKUP[self.suit] .. "_" .. FACE_LOOKUP[self.face])
 	end
 end
 
